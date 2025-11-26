@@ -1,91 +1,191 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { taskApi } from '../api/client';
+import useHouseholdTasks from '../hooks/useHouseholdTasks';
+import useHouseholdMembers from '../hooks/useHouseholdMembers';
 
-const initialTasks = [
-  { id: 1, title: '거실 청소', date: '2025-02-25', done: true },
-  { id: 2, title: '분리수거', date: '2025-02-26', done: false },
-  { id: 3, title: '장보기 리스트 작성', date: '2025-02-27', done: false },
-];
+const formatDisplayDate = (dateString) => {
+  if (!dateString) return '-';
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) {
+    return dateString;
+  }
+  return date.toLocaleDateString('ko-KR', {
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  });
+};
 
 function TasksPage() {
-  const [tasks, setTasks] = useState(initialTasks);
-  const [formState, setFormState] = useState({ title: '', date: '', done: false });
+  const { tasks, loading, error, refresh } = useHouseholdTasks();
+  const { members } = useHouseholdMembers();
+  const [actionError, setActionError] = useState('');
+  const [actionLoadingId, setActionLoadingId] = useState(null);
 
-  const handleChange = (event) => {
-    const { name, value, type, checked } = event.target;
-    setFormState((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }));
+  const memberMap = useMemo(() => {
+    const map = {};
+    members.forEach((member) => {
+      map[member.userId] = member.nickname || member.email;
+    });
+    return map;
+  }, [members]);
+
+  const sortedTasks = useMemo(() => {
+    return [...tasks].sort((a, b) => {
+      if (a.date === b.date) {
+        return (a.order || 0) - (b.order || 0);
+      }
+      return a.date < b.date ? -1 : 1;
+    });
+  }, [tasks]);
+
+  const upcoming = sortedTasks.filter((task) => !task.isDone);
+  const completedCount = tasks.filter((task) => task.isDone).length;
+
+  const handleToggle = async (taskId) => {
+    setActionError('');
+    setActionLoadingId(taskId);
+    try {
+      await taskApi.toggle(taskId);
+      await refresh();
+    } catch (err) {
+      console.error('상태 변경 실패', err);
+      setActionError(err.message || '상태 변경에 실패했습니다.');
+    } finally {
+      setActionLoadingId(null);
+    }
   };
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    if (!formState.title.trim() || !formState.date) {
+  const handleDelete = async (taskId) => {
+    if (!window.confirm('이 작업을 삭제할까요?')) {
       return;
     }
-    setTasks((prev) => [
-      ...prev,
-      { id: Date.now(), title: formState.title.trim(), date: formState.date, done: formState.done },
-    ]);
-    setFormState({ title: '', date: '', done: false });
+    setActionError('');
+    setActionLoadingId(taskId);
+    try {
+      await taskApi.remove(taskId);
+      await refresh();
+    } catch (err) {
+      console.error('삭제 실패', err);
+      setActionError(err.message || '작업을 삭제하지 못했습니다.');
+    } finally {
+      setActionLoadingId(null);
+    }
   };
 
   return (
     <div style={{ display: 'grid', gap: 24 }}>
       <section style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 2px rgba(15,23,42,0.08)' }}>
-        <h2 style={{ marginTop: 0 }}>할 일 목록</h2>
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {tasks.map((task) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h2 style={{ margin: 0 }}>가족 할 일 현황</h2>
+            <p style={{ margin: '4px 0 0', color: '#475569', fontSize: 14 }}>
+              완료 {completedCount}건 · 진행 중 {tasks.length - completedCount}건
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={refresh}
+            style={{
+              border: '1px solid #cbd5f5',
+              background: '#f8fafc',
+              borderRadius: 8,
+              padding: '6px 12px',
+              fontSize: 14,
+            }}
+          >
+            새로고침
+          </button>
+        </div>
+        {loading && <p style={{ color: '#475569' }}>불러오는 중...</p>}
+        {error && <p style={{ color: '#b42318' }}>{error}</p>}
+        {actionError && <p style={{ color: '#b42318' }}>{actionError}</p>}
+        {!loading && !error && sortedTasks.length === 0 && (
+          <p style={{ color: '#475569' }}>등록된 작업이 없습니다.</p>
+        )}
+        <ul style={{ listStyle: 'none', padding: 0, margin: '16px 0 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {sortedTasks.map((task) => (
             <li
               key={task.id}
               style={{
                 border: '1px solid #e2e8f0',
-                borderRadius: 10,
-                padding: '12px 16px',
-                backgroundColor: task.done ? '#ecfccb' : '#f8fafc',
+                borderRadius: 12,
+                padding: '14px 16px',
+                backgroundColor: task.isDone ? '#f0fdf4' : '#f8fafc',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
               }}
             >
-              <strong style={{ display: 'block', color: '#0f172a' }}>{task.title}</strong>
-              <span style={{ fontSize: 13, color: '#475569' }}>예정일: {task.date}</span>
-              <span style={{ fontSize: 13, color: task.done ? '#166534' : '#b45309', marginLeft: 8 }}>
-                {task.done ? '완료' : '진행중'}
-              </span>
+              <div>
+                <strong style={{ color: '#0f172a' }}>{task.title}</strong>
+                <div style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>
+                  {formatDisplayDate(task.date)} · {memberMap[task.partnerId] || '미지정'} · {task.points}P
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => handleToggle(task.id)}
+                  disabled={actionLoadingId === task.id}
+                  style={{
+                    border: 'none',
+                    borderRadius: 999,
+                    padding: '8px 14px',
+                    backgroundColor: task.isDone ? '#86efac' : '#e0e7ff',
+                    color: '#0f172a',
+                    fontWeight: 600,
+                  }}
+                >
+                  {task.isDone ? '완료 취소' : '완료하기'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(task.id)}
+                  disabled={actionLoadingId === task.id}
+                  style={{
+                    border: '1px solid #fecaca',
+                    borderRadius: 999,
+                    padding: '8px 14px',
+                    backgroundColor: '#fff',
+                    color: '#b91c1c',
+                    fontWeight: 600,
+                  }}
+                >
+                  삭제
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       </section>
 
       <section style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 2px rgba(15,23,42,0.08)' }}>
-        <h3 style={{ marginTop: 0 }}>새 할 일 추가</h3>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <label style={{ display: 'flex', flexDirection: 'column', fontSize: 14, color: '#1e293b' }}>
-            제목
-            <input
-              type="text"
-              name="title"
-              value={formState.title}
-              onChange={handleChange}
-              style={{ marginTop: 6, padding: 8, borderRadius: 8, border: '1px solid #cbd5f5' }}
-            />
-          </label>
-          <label style={{ display: 'flex', flexDirection: 'column', fontSize: 14, color: '#1e293b' }}>
-            예정일
-            <input
-              type="date"
-              name="date"
-              value={formState.date}
-              onChange={handleChange}
-              style={{ marginTop: 6, padding: 8, borderRadius: 8, border: '1px solid #cbd5f5' }}
-            />
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#1e293b' }}>
-            <input type="checkbox" name="done" checked={formState.done} onChange={handleChange} />
-            이미 완료했어요
-          </label>
-          <button type="submit" style={{ padding: '10px 16px', borderRadius: 8, border: 'none', backgroundColor: '#2563eb', color: '#fff', fontWeight: 600 }}>
-            추가하기
-          </button>
-        </form>
+        <h3 style={{ marginTop: 0 }}>다가오는 일정</h3>
+        {upcoming.length === 0 ? (
+          <p style={{ color: '#475569' }}>예정된 작업이 없습니다.</p>
+        ) : (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {upcoming.slice(0, 4).map((task) => (
+              <div
+                key={task.id}
+                style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 12,
+                  padding: '12px 16px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong style={{ color: '#0f172a' }}>{task.title}</strong>
+                  <span style={{ fontSize: 13, color: '#475569' }}>{formatDisplayDate(task.date)}</span>
+                </div>
+                <p style={{ margin: '6px 0 0', fontSize: 13, color: '#475569' }}>
+                  담당: {memberMap[task.partnerId] || '미지정'} · {task.points}P
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );
