@@ -1,4 +1,7 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+// src/api/client.js
+const API_BASE_URL = import.meta.env.DEV
+  ? 'http://localhost:4000/api' // 로컬 개발용
+  : 'https://choreus-server.onrender.com/api'; // 배포용 (Render URL)
 const TOKEN_KEY = 'choreus_token';
 
 export const getAuthToken = () => localStorage.getItem(TOKEN_KEY);
