@@ -701,11 +701,11 @@
 .profile-row {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
   justify-content: stretch;
   align-items: center;
-  gap: 16px;
-  padding: 14px 32px;
+  gap: 20px;
+  padding: 14px 36px;
   border-bottom: 1px solid rgba(32, 52, 36, 0.15);
   font-size: 15px;
   color: #1f2f24;
@@ -730,7 +730,7 @@
   cursor: pointer;
   font-weight: 600;
   text-align: left;
-  padding: 16px 32px;
+  padding: 16px 36px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -739,14 +739,14 @@
 .row-value {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 12px;
   color: #1f2f24;
   font-weight: 600;
-  text-align: right;
+  text-align: left;
   word-break: break-word;
   max-width: 100%;
-  justify-self: flex-end;
+  justify-self: flex-start;
 }
 
 .color-input-group {
