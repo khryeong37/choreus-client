@@ -701,11 +701,11 @@
 .profile-row {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr);
-  justify-content: space-between;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  justify-content: stretch;
   align-items: center;
-  gap: 12px;
-  padding: 14px 24px;
+  gap: 16px;
+  padding: 14px 32px;
   border-bottom: 1px solid rgba(32, 52, 36, 0.15);
   font-size: 15px;
   color: #1f2f24;
@@ -730,7 +730,7 @@
   cursor: pointer;
   font-weight: 600;
   text-align: left;
-  padding: 16px 24px;
+  padding: 16px 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -746,6 +746,7 @@
   text-align: right;
   word-break: break-word;
   max-width: 100%;
+  justify-self: flex-end;
 }
 
 .color-input-group {
