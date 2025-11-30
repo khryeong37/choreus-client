@@ -700,12 +700,12 @@
 
 .profile-row {
   width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr);
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 14px 20px;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 24px;
   border-bottom: 1px solid rgba(32, 52, 36, 0.15);
   font-size: 15px;
   color: #1f2f24;
@@ -714,7 +714,7 @@
 .profile-row span:first-child {
   font-weight: 600;
   color: #1b2b20;
-  flex: 0 0 auto;
+  justify-self: flex-start;
 }
 
 .profile-row:last-child {
@@ -730,7 +730,10 @@
   cursor: pointer;
   font-weight: 600;
   text-align: left;
-  padding: 16px 20px;
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .row-value {
@@ -741,9 +744,8 @@
   color: #1f2f24;
   font-weight: 600;
   text-align: right;
-  flex: 1 1 160px;
-  word-break: break-all;
-  flex-wrap: wrap;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .color-input-group {
