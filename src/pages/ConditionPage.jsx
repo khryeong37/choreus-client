@@ -2,7 +2,6 @@ import { useState } from 'react';
 
 function ConditionPage() {
   const [condition, setCondition] = useState({
-    sleepHours: '',
     mood: '좋음',
     notes: '',
   });
@@ -21,20 +20,6 @@ function ConditionPage() {
     <section style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 2px rgba(15,23,42,0.08)', maxWidth: 600 }}>
       <h2 style={{ marginTop: 0 }}>오늘 컨디션</h2>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14 }}>
-          수면 시간 (시간)
-          <input
-            type="number"
-            min="0"
-            step="0.5"
-            name="sleepHours"
-            value={condition.sleepHours}
-            onChange={handleChange}
-            style={{ padding: 10, borderRadius: 8, border: '1px solid #cbd5f5' }}
-            placeholder="예: 7.5"
-          />
-        </label>
-
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14 }}>
           기분 상태
           <select

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../App.css';
 import chorePreferenceOptions from '../data/chorePreferences';
-import { getAuthToken, requestApi, setAuthToken, taskApi, userApi, conditionApi } from '../api/client';
+import { getAuthToken, requestApi, setAuthToken, taskApi, userApi, conditionApi, tipApi, templateApi } from '../api/client';
 import logoMark from '../../data/최종 로고.svg';
 import iconHome from '../../data/home.png';
 import iconSofa from '../../data/sofa.png';
@@ -78,7 +78,7 @@ const adaptServerRequest = (entry) => {
   };
 };
 
-const roomOptions = [
+const defaultRoomOptions = [
   { id: 'all', label: '집 전체', icon: iconHome },
   { id: 'living', label: '거실', icon: iconSofa },
   { id: 'kitchen', label: '주방', icon: iconFridge },
@@ -87,7 +87,7 @@ const roomOptions = [
   { id: 'laundry', label: '세탁', icon: iconLaundry },
 ];
 
-const roomTaskLibrary = {
+const defaultRoomTaskLibrary = {
   all: ['집안 전체 환기', '쓰레기 배출', '공용 공간 정리'],
   living: ['거실 먼지 털기', '쿠션 정리', 'TV 주변 정리'],
   kitchen: ['점심요리', '설거지', '싱크대 청소'],
@@ -119,7 +119,6 @@ const recommendationList = [
     points: 60,
     category: 'daily',
     room: '주방',
-    tip: '식단 밸런스 팁',
     partnerId: 'p1',
   },
   {
@@ -128,7 +127,6 @@ const recommendationList = [
     points: 60,
     category: 'daily',
     room: '주방',
-    tip: '정리 루틴 팁',
     partnerId: 'p1',
   },
   {
@@ -137,7 +135,6 @@ const recommendationList = [
     points: 30,
     category: 'today',
     room: '침실',
-    tip: '침구 관리 팁',
     partnerId: 'p2',
   },
   {
@@ -146,7 +143,6 @@ const recommendationList = [
     points: 50,
     category: 'today',
     room: '욕실',
-    tip: '살균 관리 팁',
     partnerId: 'p2',
   },
 ].map((item) => ({
@@ -158,10 +154,157 @@ const favoriteChoreOptions = chorePreferenceOptions;
 
 const dayLabels = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const today = new Date();
+
+const formatSimpleDate = (isoDate) => {
+  if (!isoDate || typeof isoDate !== 'string') {
+    return '-';
+  }
+  const [year, month, day] = isoDate.split('-');
+  if (!year || !month || !day) {
+    return isoDate;
+  }
+  return `${month.padStart(2, '0')}. ${day.padStart(2, '0')}.`;
+};
+
+const parseIsoDate = (iso) => {
+  if (!iso) {
+    return null;
+  }
+  const [year, month, day] = iso.split('-').map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+  return new Date(year, month - 1, day);
+};
+
+const diffFromToday = (iso) => {
+  const target = parseIsoDate(iso);
+  if (!target) {
+    return null;
+  }
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.floor(
+    (target.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24)
+  );
+};
+
+const shouldDisableToggle = (iso) => {
+  const diff = diffFromToday(iso);
+  if (diff === null) {
+    return true;
+  }
+  if (diff > 0) {
+    return true;
+  }
+  if (diff < -7) {
+    return true;
+  }
+  return false;
+};
+
+const conditionKeywordScores = [
+  { keywords: ['최고', '매우 좋', '최상'], score: 9 },
+  { keywords: ['좋', '양호', '쾌적'], score: 7 },
+  { keywords: ['보통', '무난', '괜찮'], score: 5 },
+  { keywords: ['피곤', '지침', '힘들', '낮'], score: 3 },
+  { keywords: ['휴식', '아픔', '못 함', '못함', '나쁨'], score: 2 },
+];
+
+const parseConditionTextScore = (text = '') => {
+  const normalized = text.toLowerCase();
+  for (const entry of conditionKeywordScores) {
+    if (entry.keywords.some((keyword) => normalized.includes(keyword.toLowerCase()))) {
+      return entry.score;
+    }
+  }
+  return 5;
+};
+
+const getIntensityFromPoints = (points = 0) => {
+  if (points >= 60) return 'high';
+  if (points >= 40) return 'medium';
+  return 'low';
+};
+
+const conditionThresholdByIntensity = {
+  high: 7,
+  medium: 5,
+  low: 3,
+};
+
+const roomIconMap = {
+  all: iconHome,
+  living: iconSofa,
+  kitchen: iconFridge,
+  bed: iconBed,
+  bath: iconBath,
+  laundry: iconLaundry,
+  '집 전체': iconHome,
+  '거실': iconSofa,
+  '주방': iconFridge,
+  '침실': iconBed,
+  '욕실': iconBath,
+  '세탁': iconLaundry,
+};
+
+const slugifyRoom = (label = '') => {
+  const normalized = String(label)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣]+/g, '-');
+  return normalized.replace(/^-+|-+$/g, '') || 'room';
+};
+
+const tipPlaceholders = new Set([
+  '자율 추가',
+  '추천 할일',
+  '식단 밸런스 팁',
+  '정리 루틴 팁',
+  '침구 관리 팁',
+  '살균 관리 팁',
+]);
+
+const normalizeTip = (text) => {
+  if (!text) {
+    return '';
+  }
+  const trimmed = text.trim();
+  if (!trimmed || tipPlaceholders.has(trimmed)) {
+    return '';
+  }
+  return trimmed;
+};
+
+const getSeasonFromDate = (date) => {
+  if (!date) {
+    return '';
+  }
+  const month = Number(date.split('-')[1]);
+  if (Number.isNaN(month)) {
+    return '';
+  }
+  if ([12, 1, 2].includes(month)) {
+    return '겨울';
+  }
+  if ([3, 4, 5].includes(month)) {
+    return '봄';
+  }
+  if ([6, 7, 8].includes(month)) {
+    return '여름';
+  }
+  return '가을';
+};
 const initialAnchorDate = new Date(today.getFullYear(), today.getMonth(), 1);
 const todayIso = today.toISOString().split('T')[0];
 
-const formatISO = (date) => date.toISOString().split('T')[0];
+const formatISO = (date) => {
+  if (!(date instanceof Date)) {
+    return '';
+  }
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offsetMs).toISOString().split('T')[0];
+};
 
 const buildTaskForm = (date, participantId = '') => ({
   title: '',
@@ -295,6 +438,9 @@ function CalendarPage() {
     loading: false,
     error: '',
   });
+  const [categoryRooms, setCategoryRooms] = useState(defaultRoomOptions);
+  const [categoryLibrary, setCategoryLibrary] = useState(defaultRoomTaskLibrary);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [actionPickerOpen, setActionPickerOpen] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [requests, setRequests] = useState([]);
@@ -306,6 +452,33 @@ function CalendarPage() {
   const [requestForm, setRequestForm] = useState(buildRequestForm('', ''));
   const [activePartner, setActivePartner] = useState(null);
   const [detailTask, setDetailTask] = useState(null);
+  const latestConditionEntry = useMemo(() => {
+    if (!conditionsMap) {
+      return null;
+    }
+    const entries = Object.values(conditionsMap);
+    if (!entries.length) {
+      return null;
+    }
+    return entries
+      .slice()
+      .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  }, [conditionsMap]);
+  const currentUserConditionScore = useMemo(() => {
+    if (!latestConditionEntry) {
+      return 6;
+    }
+    const morning =
+      typeof latestConditionEntry.morningScore === 'number'
+        ? latestConditionEntry.morningScore
+        : 5;
+    const preChore =
+      latestConditionEntry.preChoreDisabled ||
+      typeof latestConditionEntry.preChoreScore !== 'number'
+        ? morning
+        : latestConditionEntry.preChoreScore;
+    return Math.round((morning + preChore) / 2);
+  }, [latestConditionEntry]);
   const updatePartnerProfile = (partnerId, updates) => {
     const normalizedUpdates =
       updates && updates.color && !updates.accent
@@ -464,6 +637,74 @@ const toPartnerCard = (member, index, share = 0) => {
     loadConditions();
   }, [loadConditions]);
   useEffect(() => {
+    let cancelled = false;
+    const loadTemplates = async () => {
+      try {
+        const { templates } = await templateApi.list();
+        if (
+          cancelled ||
+          !templates ||
+          !Array.isArray(templates) ||
+          !templates.length
+        ) {
+          return;
+        }
+        const grouped = templates.reduce((acc, template) => {
+          const label = template.room?.trim() || '기타';
+          const id = slugifyRoom(label);
+          if (!acc[id]) {
+            acc[id] = { label, tasks: [] };
+          }
+          if (template.title) {
+            acc[id].tasks.push(template.title);
+          }
+          return acc;
+        }, {});
+        if (!Object.keys(grouped).length) {
+          return;
+        }
+        const allTasksSet = new Set();
+        Object.values(grouped).forEach((group) => {
+          group.tasks = Array.from(new Set(group.tasks)).sort((a, b) =>
+            a.localeCompare(b, 'ko')
+          );
+          group.tasks.forEach((task) => allTasksSet.add(task));
+        });
+        const dynamicRooms = Object.entries(grouped)
+          .filter(([id]) => id !== 'all')
+          .map(([id, info]) => ({
+            id,
+            label: info.label,
+            icon: roomIconMap[info.label] || roomIconMap[id] || iconHome,
+          }))
+          .sort((a, b) => a.label.localeCompare(b.label, 'ko'));
+        const mergedRooms = [defaultRoomOptions[0], ...dynamicRooms];
+        const allTasksList = Array.from(allTasksSet).sort((a, b) =>
+          a.localeCompare(b, 'ko')
+        );
+        const mergedLibrary = {
+          ...defaultRoomTaskLibrary,
+          ...Object.fromEntries(
+            Object.entries(grouped).map(([id, info]) => [id, info.tasks])
+          ),
+          all: allTasksSet.size ? allTasksList : defaultRoomTaskLibrary.all,
+        };
+        if (!cancelled) {
+          setCategoryRooms(mergedRooms);
+          setCategoryLibrary(mergedLibrary);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('작업 템플릿을 불러오지 못했습니다.', error);
+        }
+      }
+    };
+    loadTemplates();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
     const fallbackId = partners[0]?.id || currentUserId;
     if (!fallbackId) {
       return;
@@ -600,6 +841,9 @@ const toPartnerCard = (member, index, share = 0) => {
   };
 
   const toggleTaskCompletion = async (date, taskId) => {
+    if (shouldDisableToggle(date)) {
+      return;
+    }
     setTaskActionError('');
     try {
       const updated = await taskApi.toggle(taskId);
@@ -613,6 +857,43 @@ const toPartnerCard = (member, index, share = 0) => {
     }
   };
 
+  const generateTipForTask = useCallback(
+    async (taskInfo) => {
+      if (!taskInfo?.title) {
+        throw new Error('할 일 정보를 찾지 못했습니다.');
+      }
+      const context = [
+        taskInfo.room && `공간: ${taskInfo.room}`,
+        taskInfo.repeat && `반복: ${taskInfo.repeat}`,
+        taskInfo.note && `메모: ${taskInfo.note}`,
+        taskInfo.date && `일자: ${taskInfo.date}`,
+        taskInfo.date && `계절: ${getSeasonFromDate(taskInfo.date)}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const { tip } = await tipApi.generate({
+        title: taskInfo.title,
+        context,
+      });
+      const normalized = normalizeTip(tip);
+      if (!normalized) {
+        throw new Error('생성된 팁이 비어 있어요.');
+      }
+      try {
+        const updated = await taskApi.update(taskInfo.id, { tip: normalized });
+        setScheduleMap((prev) => applyTaskToMap(prev, updated, taskInfo.date));
+        setDetailTask((prev) =>
+          prev && prev.id === taskInfo.id ? { ...prev, tip: normalized } : prev
+        );
+      } catch (error) {
+        console.error('팁 저장 실패:', error);
+        throw new Error(error.message || '팁을 저장하지 못했습니다.');
+      }
+      return normalized;
+    },
+    [setDetailTask]
+  );
+
   const partnerMap = useMemo(() => {
     const map = {};
     partners.forEach((partner) => {
@@ -620,6 +901,21 @@ const toPartnerCard = (member, index, share = 0) => {
     });
     return map;
   }, [partners]);
+  const getPartnerConditionScore = useCallback(
+    (partner) => {
+      if (!partner) {
+        return 5;
+      }
+      if (partner.id === currentUserId) {
+        return currentUserConditionScore;
+      }
+      if (typeof partner.conditionScore === 'number') {
+        return partner.conditionScore;
+      }
+      return parseConditionTextScore(partner.condition || '');
+    },
+    [currentUserConditionScore, currentUserId]
+  );
 
   const calendarCells = useMemo(() => {
     const firstOfMonth = new Date(
@@ -711,6 +1007,48 @@ const toPartnerCard = (member, index, share = 0) => {
     });
     return totals;
   }, [scheduleMap, anchorDate]);
+  const personalizedRecommendations = useMemo(() => {
+    if (!partners.length) {
+      return recommendationList;
+    }
+    return recommendationList.map((rec) => {
+      const intensity = getIntensityFromPoints(rec.points || 0);
+      const minCondition = conditionThresholdByIntensity[intensity] ?? 3;
+      const scores = partners.map((partner) => {
+        const conditionScore = getPartnerConditionScore(partner);
+        const load = rollingPointsMap[partner.id] || 0;
+        const eligible = conditionScore >= minCondition;
+        return { partner, load, conditionScore, eligible };
+      });
+      const pickPool = scores
+        .filter((entry) => entry.eligible)
+        .sort((a, b) => {
+          if (a.load === b.load) {
+            return b.conditionScore - a.conditionScore;
+          }
+          return a.load - b.load;
+        });
+      const fallbackPool = scores
+        .slice()
+        .sort((a, b) => {
+          if (a.load === b.load) {
+            return b.conditionScore - a.conditionScore;
+          }
+          return a.load - b.load;
+        });
+      const chosen = pickPool[0] || fallbackPool[0];
+      const assignedPartnerId =
+        chosen?.partner?.id ||
+        rec.assignedPartnerId ||
+        rec.partnerId ||
+        partners[0]?.id ||
+        '';
+      if (rec.assignedPartnerId === assignedPartnerId) {
+        return rec;
+      }
+      return { ...rec, assignedPartnerId };
+    });
+  }, [partners, getPartnerConditionScore, rollingPointsMap]);
 
 const partnerContributionMap = useMemo(() => {
   const totalPoints = Object.values(rollingPointsMap).reduce(
@@ -903,13 +1241,13 @@ const partnerContributionMap = useMemo(() => {
     }
     setTaskModalStatus({ loading: true, error: '' });
     const selectedRoom =
-      roomOptions.find((room) => room.id === taskForm.roomId)?.label || '';
+      categoryRooms.find((room) => room.id === taskForm.roomId)?.label || '';
     const payload = {
       title: taskForm.title.trim(),
       date: taskForm.date,
       partnerId: taskForm.participantId,
       room: selectedRoom,
-      tip: taskForm.memo || '자율 추가',
+      tip: '',
       repeat: taskForm.repeat,
       endDate: taskForm.endDate,
       category: taskForm.category,
@@ -1126,13 +1464,15 @@ const partnerContributionMap = useMemo(() => {
           dayLabel={dayLabel}
           onDayShift={handleDayShift}
           tasks={tasksForSelectedDate}
-          recommendations={recommendationList}
+          recommendations={personalizedRecommendations}
           partners={partners}
           onSelectRecommendation={handleRecommendationSelect}
           onOpenActionPicker={openActionPicker}
           partnerMap={partnerMap}
           onOpenDetail={(taskId) => openTaskDetail(selectedDate, taskId)}
-          onToggleComplete={(taskId) => toggleTaskCompletion(selectedDate, taskId)}
+          onToggleComplete={(taskId, taskDate) =>
+            toggleTaskCompletion(taskDate || selectedDate, taskId)
+          }
         />
       );
     }
@@ -1142,6 +1482,9 @@ const partnerContributionMap = useMemo(() => {
           tasks={allTasks}
           partnerMap={partnerMap}
           onOpenDetail={openTaskDetail}
+          onToggleComplete={(taskId, taskDate) =>
+            toggleTaskCompletion(taskDate, taskId)
+          }
         />
       );
     }
@@ -1186,15 +1529,15 @@ const partnerContributionMap = useMemo(() => {
         <section className="partner-section">
           <header className="partner-section-header">
             <h2>가사 파트너</h2>
-            <button type="button" className="plain-icon">
+            <button
+              type="button"
+              className="plain-icon"
+              onClick={() => setInviteModalOpen(true)}
+              aria-label="초대 코드 보기"
+            >
               ＋
             </button>
           </header>
-          {currentUser?.inviteCode && (
-            <p className="invite-code-pill">
-              내 초대코드 <strong>{currentUser.inviteCode}</strong>
-            </p>
-          )}
           {partnersLoading ? (
             <p className="empty-hint">가사 파트너 정보를 불러오는 중...</p>
           ) : partners.length === 0 ? (
@@ -1270,7 +1613,7 @@ const partnerContributionMap = useMemo(() => {
             onSubmit={submitTaskForm}
             onDelete={closeTaskModal}
             openCategory={() => setShowCategoryPicker(true)}
-            roomOptions={roomOptions}
+            roomOptions={categoryRooms}
             partners={partners}
             durationOptions={durationOptions}
             effortOptions={effortOptions}
@@ -1290,8 +1633,8 @@ const partnerContributionMap = useMemo(() => {
         )}
         {showCategoryPicker && (
           <CategoryPicker
-            rooms={roomOptions}
-            library={roomTaskLibrary}
+            rooms={categoryRooms}
+            library={categoryLibrary}
             onClose={() => setShowCategoryPicker(false)}
             onSelect={handleCategorySelect}
           />
@@ -1312,7 +1655,7 @@ const partnerContributionMap = useMemo(() => {
                   date: selectedDate,
                   partnerId,
                   room: activeRecommendation.room || '공용 공간',
-                  tip: activeRecommendation.tip || '추천 할일',
+                  tip: '',
                   repeat: '없음',
                   endDate: selectedDate,
                   category: activeRecommendation.category || 'recommendation',
@@ -1366,6 +1709,7 @@ const partnerContributionMap = useMemo(() => {
             onDelete={() => deleteTask(detailTask)}
             onReschedule={(days) => rescheduleTask(detailTask, days)}
             onToggleComplete={() => toggleTaskCompletion(detailTask.date, detailTask.id)}
+            onGenerateTip={generateTipForTask}
           />
         )}
         {conditionModalOpen && (
@@ -1379,6 +1723,12 @@ const partnerContributionMap = useMemo(() => {
             onDelete={handleConditionDelete}
             onTogglePreChoreDisabled={togglePreChoreDisabled}
             status={conditionStatus}
+          />
+        )}
+        {inviteModalOpen && (
+          <InviteCodeModal
+            code={currentUser?.inviteCode}
+            onClose={() => setInviteModalOpen(false)}
           />
         )}
       </main>
@@ -1560,7 +1910,7 @@ function DayView({
             task={task}
             partnerMap={partnerMap}
             onClick={() => onOpenDetail(task.id)}
-            onToggleComplete={() => onToggleComplete(task.id)}
+            onToggleComplete={() => onToggleComplete(task.id, task.date)}
           />
         ))}
       </div>
@@ -1736,6 +2086,8 @@ function DayTaskCard({ task, partnerMap, onClick, onToggleComplete }) {
   const partner = partnerMap[task.partnerId];
   const accent = partner?.accent || '#2d4f3a';
   const tint = `${partner?.color || '#dfe7d9'}33`;
+  const tipText = normalizeTip(task.tip);
+  const toggleDisabled = shouldDisableToggle(task.date);
   return (
     <article
       className="day-task-card"
@@ -1749,7 +2101,7 @@ function DayTaskCard({ task, partnerMap, onClick, onToggleComplete }) {
       <div className="task-body">
         <div className="task-title-row">
           <strong>{task.title}</strong>
-          <span className="task-tip">[{task.tip}]</span>
+          {tipText && <span className="task-tip">[{tipText}]</span>}
         </div>
         <span className="task-room">{task.room}</span>
       </div>
@@ -1761,9 +2113,13 @@ function DayTaskCard({ task, partnerMap, onClick, onToggleComplete }) {
           style={{ color: accent }}
           onClick={(event) => {
             event.stopPropagation();
-            onToggleComplete();
+            if (toggleDisabled) {
+              return;
+            }
+            onToggleComplete?.(task.id, task.date);
           }}
-          aria-label="할 일 완료 체크"
+          disabled={toggleDisabled}
+          aria-label={task.isDone ? '완료됨' : '완료 표시'}
         />
         <span className="task-points">{task.points}P</span>
       </div>
@@ -1857,7 +2213,15 @@ function PlaceholderPanel({ title, description }) {
   );
 }
 
-function AllTasksView({ tasks, partnerMap, onOpenDetail }) {
+function AllTasksView({ tasks, partnerMap, onOpenDetail, onToggleComplete }) {
+  const handleToggleClick = (event, task) => {
+    event.stopPropagation();
+    if (!onToggleComplete) {
+      return;
+    }
+    onToggleComplete(task.id, task.date);
+  };
+
   return (
     <section className="all-tasks-view">
       <header>
@@ -1867,6 +2231,7 @@ function AllTasksView({ tasks, partnerMap, onOpenDetail }) {
       <div className="all-task-scroll">
         {tasks.map((task) => {
           const partner = partnerMap[task.partnerId];
+          const toggleDisabled = shouldDisableToggle(task.date);
           return (
             <div
               key={`${task.id}-${task.date}`}
@@ -1889,9 +2254,13 @@ function AllTasksView({ tasks, partnerMap, onOpenDetail }) {
               </div>
               <div className="task-meta">
                 <span className="task-partner">{partner?.name}</span>
-                <span
-                  className="partner-dot"
-                  style={{ backgroundColor: partner?.color }}
+                <button
+                  type="button"
+                  className={`partner-dot is-toggle${task.isDone ? ' is-checked' : ''}`}
+                  style={{ color: partner?.accent || partner?.color || '#2d4f3a' }}
+                  onClick={(event) => handleToggleClick(event, task)}
+                  disabled={toggleDisabled}
+                  aria-label={task.isDone ? '완료됨' : '미완료'}
                 />
                 <span className="task-points">{task.points}P</span>
               </div>
@@ -1936,6 +2305,33 @@ function ActionPickerModal({ onClose, onSelect }) {
             </button>
           </li>
         </ul>
+      </div>
+    </div>
+  );
+}
+
+function InviteCodeModal({ code, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="task-modal invite-modal" onClick={(event) => event.stopPropagation()}>
+        <header className="task-modal-header">
+          <button type="button" onClick={onClose} aria-label="닫기">
+            ‹
+          </button>
+          <strong>초대 코드 공유</strong>
+          <span />
+        </header>
+        <div className="invite-modal-body">
+          <p className="invite-modal-title">
+            가족 구성원과 함께하려면 아래 초대코드를 공유하세요.
+          </p>
+          <p className="invite-code-pill invite-modal-code">
+            내 초대코드 <strong>{code || '발급 준비중'}</strong>
+          </p>
+          <p className="invite-modal-hint">
+            초대받은 사람은 회원가입 시 이 코드를 입력하면 같은 집으로 합류합니다.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -2110,7 +2506,7 @@ function ConditionModal({
     morning:
       '기상 직후 몸 상태를 입력하면 일정 추천에 반영돼요. 입력 후 5~10분 내 반영됩니다.',
     preChore:
-      "하루 일과를 끝낸 후 집안일을 시작하기 직전의 컨디션을 입력해주세요.\n본격적인 일이 없는 날이거나 하루종일 집안일을 할 경우에는 '괜찮아요'를 눌러주세요!",
+      '하루 일과를 끝낸 후 집안일을 시작하기 직전의 컨디션을 입력해주세요.\n본격적인 일이 없는 날이거나 하루종일 집안일을 할 경우에는 토글을 켜서 입력을 건너뛰어도 돼요.',
   };
 
   return (
@@ -2147,12 +2543,11 @@ function ConditionModal({
                 >
                   ?
                 </button>
-              </span>
-              <span className="condition-label">{form.morningLabel}</span>
-              <div className="condition-buttons">
-                {Array.from({ length: 11 }).map((_, index) => (
-                  <button
-                    key={`morning-${index}`}
+          </span>
+          <div className="condition-buttons">
+            {Array.from({ length: 11 }).map((_, index) => (
+              <button
+                key={`morning-${index}`}
                     type="button"
                     className={form.morningScore === index ? 'is-active' : undefined}
                     onClick={() => onScoreChange('morningScore', index)}
@@ -2837,15 +3232,21 @@ function TaskDetailModal({
   onDelete,
   onReschedule,
   onToggleComplete,
+  onGenerateTip,
 }) {
   const [delayOption, setDelayOption] = useState('선택');
   const [customDays, setCustomDays] = useState(4);
-  const displayDate = task.date
-    ? new Date(task.date).toLocaleDateString('ko-KR', {
-        month: '2-digit',
-        day: '2-digit',
-      })
-    : '-';
+  const [tipState, setTipState] = useState(() => ({
+    text: normalizeTip(task.tip),
+    loading: false,
+    error: '',
+  }));
+
+  useEffect(() => {
+    setTipState({ text: normalizeTip(task.tip), loading: false, error: '' });
+  }, [task]);
+
+  const displayDate = formatSimpleDate(task.date);
   const handleDelayChange = (value) => {
     setDelayOption(value);
     if (value === '선택' || value === 'custom') {
@@ -2865,7 +3266,23 @@ function TaskDetailModal({
     }
   };
   const tipLabel = '팁';
-  const tipText = task.tip || '추가된 메모가 없어요.';
+  const tipText = tipState.text || '아직 생성된 팁이 없어요.';
+  const handleTipGenerate = async () => {
+    if (!onGenerateTip || tipState.loading) {
+      return;
+    }
+    setTipState((prev) => ({ ...prev, loading: true, error: '' }));
+    try {
+      const generated = await onGenerateTip(task);
+      setTipState({ text: generated, loading: false, error: '' });
+    } catch (error) {
+      setTipState((prev) => ({
+        ...prev,
+        loading: false,
+        error: error.message || '팁을 생성하지 못했습니다.',
+      }));
+    }
+  };
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="detail-modal" onClick={(event) => event.stopPropagation()}>
@@ -2935,7 +3352,20 @@ function TaskDetailModal({
           </div>
         </section>
         <section className="detail-tip">
-          <strong>[{tipLabel}]</strong>
+          <div className="detail-tip-header">
+            <strong>[{tipLabel}]</strong>
+            <button
+              type="button"
+              className="tip-generate-button"
+              onClick={handleTipGenerate}
+              disabled={!onGenerateTip || tipState.loading}
+            >
+              {tipState.loading ? '생성 중...' : '팁 생성'}
+            </button>
+          </div>
+          {tipState.error && (
+            <p className="tip-feedback is-error">{tipState.error}</p>
+          )}
           <p>{tipText}</p>
         </section>
         <div className="detail-actions">

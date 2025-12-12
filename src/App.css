@@ -44,6 +44,14 @@
   align-items: center;
 }
 
+.home-selector span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transform: translateY(-4px);
+}
+
 .nav-buttons {
   display: flex;
   flex-direction: column;
@@ -333,6 +341,11 @@
   background: currentColor;
 }
 
+.partner-dot.is-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .task-points {
   padding: 6px 16px;
   border-radius: 999px;
@@ -620,6 +633,36 @@
 
 .condition-modal {
   width: min(520px, 92vw);
+}
+
+.invite-modal {
+  width: min(360px, 90vw);
+  gap: 20px;
+}
+
+.invite-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.invite-modal-title {
+  margin: 0;
+  font-size: 15px;
+  color: #2a3c2c;
+}
+
+.invite-modal-code {
+  font-size: 16px;
+  margin: 0;
+  text-align: center;
+}
+
+.invite-modal-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #5b6d5b;
+  text-align: center;
 }
 
 .detail-modal {
@@ -935,9 +978,41 @@
   background: #f9fcf7;
 }
 
+.detail-tip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
 .detail-tip strong {
   display: block;
-  margin-bottom: 4px;
+}
+
+.tip-generate-button {
+  border-radius: 999px;
+  border: 1px solid #2f4f3c;
+  background: #fff;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f3b2b;
+}
+
+.tip-generate-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tip-feedback {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #506550;
+}
+
+.tip-feedback.is-error {
+  color: #b42318;
 }
 
 .detail-actions {
@@ -1370,7 +1445,7 @@
   background: #2a553e;
   color: #fff;
   font-size: 32px;
-  line-height: 0;
+  line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1776,6 +1851,14 @@
   align-items: center;
   font-size: 16px;
   color: #1e2f26;
+  text-align: left;
+}
+
+.action-picker-modal .action-picker-list li button span:first-child {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .action-picker-modal .action-picker-list li button small {
