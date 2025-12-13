@@ -233,3 +233,16 @@ export const tipApi = {
 export const templateApi = {
   list: () => apiRequest('/templates'),
 };
+
+export const rlApi = {
+  recommend: (payload) =>
+    apiRequest('/rl/recommend', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  feedback: (payload) =>
+    apiRequest('/rl/feedback', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../App.css';
 import chorePreferenceOptions from '../data/chorePreferences';
-import { getAuthToken, requestApi, setAuthToken, taskApi, userApi, conditionApi, tipApi, templateApi } from '../api/client';
+import { getAuthToken, requestApi, setAuthToken, taskApi, userApi, conditionApi, tipApi, templateApi, rlApi } from '../api/client';
 import logoMark from '../../data/최종 로고.svg';
 import iconHome from '../../data/home.png';
 import iconSofa from '../../data/sofa.png';
@@ -112,7 +112,7 @@ const effortOptions = [
   { id: 'extreme', label: '아주 힘듦', weight: 30 },
 ];
 
-const recommendationList = [
+const baseRecommendationList = [
   {
     id: 'rec1',
     title: '저녁요리',
@@ -120,6 +120,7 @@ const recommendationList = [
     category: 'daily',
     room: '주방',
     partnerId: 'p1',
+    legacyId: 14,
   },
   {
     id: 'rec2',
@@ -128,6 +129,7 @@ const recommendationList = [
     category: 'daily',
     room: '주방',
     partnerId: 'p1',
+    legacyId: 95,
   },
   {
     id: 'rec3',
@@ -136,6 +138,7 @@ const recommendationList = [
     category: 'today',
     room: '침실',
     partnerId: 'p2',
+    legacyId: 142,
   },
   {
     id: 'rec4',
@@ -144,11 +147,20 @@ const recommendationList = [
     category: 'today',
     room: '욕실',
     partnerId: 'p2',
+    legacyId: 1,
   },
 ].map((item) => ({
   ...item,
   assignedPartnerId: item.partnerId,
 }));
+const defaultDailyRecommendations = baseRecommendationList.filter(
+  (rec) => rec.category === 'daily'
+);
+const defaultRollingRecommendations = baseRecommendationList.filter(
+  (rec) => rec.category !== 'daily'
+);
+const cloneDefaultRollingRecommendations = () =>
+  defaultRollingRecommendations.map((rec) => ({ ...rec }));
 
 const favoriteChoreOptions = chorePreferenceOptions;
 
@@ -424,6 +436,14 @@ function CalendarPage() {
   const [conditionsLoading, setConditionsLoading] = useState(true);
   const [conditionListError, setConditionListError] = useState('');
   const [activeRecommendation, setActiveRecommendation] = useState(null);
+  const [aiRecommendations, setAiRecommendations] = useState(
+    cloneDefaultRollingRecommendations
+  );
+  const [aiRecommendationStatus, setAiRecommendationStatus] = useState({
+    loading: false,
+    error: '',
+  });
+  const [rlContext, setRlContext] = useState(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [taskForm, setTaskForm] = useState(() => buildTaskForm(todayIso));
   const [taskModalStatus, setTaskModalStatus] = useState({
@@ -479,6 +499,28 @@ function CalendarPage() {
         : latestConditionEntry.preChoreScore;
     return Math.round((morning + preChore) / 2);
   }, [latestConditionEntry]);
+  const partnerMap = useMemo(() => {
+    const map = {};
+    partners.forEach((partner) => {
+      map[partner.id] = partner;
+    });
+    return map;
+  }, [partners]);
+  const getPartnerConditionScore = useCallback(
+    (partner) => {
+      if (!partner) {
+        return 5;
+      }
+      if (partner.id === currentUserId) {
+        return currentUserConditionScore;
+      }
+      if (typeof partner.conditionScore === 'number') {
+        return partner.conditionScore;
+      }
+      return parseConditionTextScore(partner.condition || '');
+    },
+    [currentUserConditionScore, currentUserId]
+  );
   const updatePartnerProfile = (partnerId, updates) => {
     const normalizedUpdates =
       updates && updates.color && !updates.accent
@@ -636,6 +678,114 @@ const toPartnerCard = (member, index, share = 0) => {
   useEffect(() => {
     loadConditions();
   }, [loadConditions]);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchAiRecommendations = async () => {
+      if (!getAuthToken()) {
+        if (!cancelled) {
+          setAiRecommendations(cloneDefaultRollingRecommendations());
+          setAiRecommendationStatus({ loading: false, error: '' });
+          setRlContext(null);
+        }
+        return;
+      }
+      setAiRecommendationStatus({ loading: true, error: '' });
+      const baseTaskIds = defaultDailyRecommendations
+        .map((rec) => rec.legacyId)
+        .filter((id) => Number.isInteger(id));
+      const baseTaskIdSet = new Set(baseTaskIds);
+      const referenceDate = selectedDate || todayIso;
+      const dow = new Date(referenceDate).getDay();
+      const conditionScores = partners
+        .map((partner) => {
+          const rawScore = Math.round(getPartnerConditionScore(partner));
+          if (!Number.isFinite(rawScore)) {
+            return null;
+          }
+          return Math.max(0, Math.min(10, rawScore));
+        })
+        .filter((score) => score !== null);
+      if (!conditionScores.length) {
+        const fallbackScore = Math.max(
+          0,
+          Math.min(10, Math.round(currentUserConditionScore))
+        );
+        conditionScores.push(fallbackScore);
+      }
+      try {
+        const result = await rlApi.recommend({
+          dow,
+          fixed_task_ids: baseTaskIds,
+          condition_scores: conditionScores,
+        });
+        if (cancelled) {
+          return;
+        }
+        const taskDetails = Array.isArray(result.taskDetails)
+          ? result.taskDetails
+          : [];
+        const normalized = taskDetails
+          .map((task) => ({
+            id: `ai-${task.legacyId || task.task_id || task.id}`,
+            title: task.title || '추천 작업',
+            points:
+              typeof task.points === 'number'
+                ? task.points
+                : typeof task.defaultPoints === 'number'
+                  ? task.defaultPoints
+                  : 0,
+            category: 'today',
+            room: task.room || task.category || '추천',
+            partnerId: '',
+            assignedPartnerId: '',
+            legacyId: task.legacyId ?? task.task_id ?? task.id,
+          }))
+          .filter((task) => task.legacyId && !baseTaskIdSet.has(task.legacyId));
+        const chosenId = result.chosen_task_id;
+        if (!normalized.length) {
+          setAiRecommendations(cloneDefaultRollingRecommendations());
+          setAiRecommendationStatus({
+            loading: false,
+            error: '추천 결과가 없어 기본 목록을 보여드릴게요.',
+          });
+          setRlContext(null);
+          return;
+        }
+        setAiRecommendations(normalized);
+        setAiRecommendationStatus({ loading: false, error: '' });
+        if (chosenId && normalized.some((item) => item.legacyId === chosenId)) {
+          setRlContext({
+            dow,
+            conditionScores,
+            state: result.state,
+            chosenTaskId: chosenId,
+          });
+        } else {
+          setRlContext(null);
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        console.error('AI 추천 요청 실패:', error);
+        setAiRecommendations(cloneDefaultRollingRecommendations());
+        setAiRecommendationStatus({
+          loading: false,
+          error: error.message || 'AI 추천을 불러오지 못했습니다.',
+        });
+        setRlContext(null);
+      }
+    };
+    fetchAiRecommendations();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedDate,
+    partners,
+    getPartnerConditionScore,
+    currentUserConditionScore,
+  ]);
   useEffect(() => {
     let cancelled = false;
     const loadTemplates = async () => {
@@ -894,28 +1044,6 @@ const toPartnerCard = (member, index, share = 0) => {
     [setDetailTask]
   );
 
-  const partnerMap = useMemo(() => {
-    const map = {};
-    partners.forEach((partner) => {
-      map[partner.id] = partner;
-    });
-    return map;
-  }, [partners]);
-  const getPartnerConditionScore = useCallback(
-    (partner) => {
-      if (!partner) {
-        return 5;
-      }
-      if (partner.id === currentUserId) {
-        return currentUserConditionScore;
-      }
-      if (typeof partner.conditionScore === 'number') {
-        return partner.conditionScore;
-      }
-      return parseConditionTextScore(partner.condition || '');
-    },
-    [currentUserConditionScore, currentUserId]
-  );
 
   const calendarCells = useMemo(() => {
     const firstOfMonth = new Date(
@@ -1007,11 +1135,15 @@ const toPartnerCard = (member, index, share = 0) => {
     });
     return totals;
   }, [scheduleMap, anchorDate]);
+  const recommendationSource = useMemo(
+    () => [...defaultDailyRecommendations, ...aiRecommendations],
+    [aiRecommendations]
+  );
   const personalizedRecommendations = useMemo(() => {
     if (!partners.length) {
-      return recommendationList;
+      return recommendationSource;
     }
-    return recommendationList.map((rec) => {
+    return recommendationSource.map((rec) => {
       const intensity = getIntensityFromPoints(rec.points || 0);
       const minCondition = conditionThresholdByIntensity[intensity] ?? 3;
       const scores = partners.map((partner) => {
@@ -1048,7 +1180,12 @@ const toPartnerCard = (member, index, share = 0) => {
       }
       return { ...rec, assignedPartnerId };
     });
-  }, [partners, getPartnerConditionScore, rollingPointsMap]);
+  }, [
+    partners,
+    getPartnerConditionScore,
+    rollingPointsMap,
+    recommendationSource,
+  ]);
 
 const partnerContributionMap = useMemo(() => {
   const totalPoints = Object.values(rollingPointsMap).reduce(
@@ -1473,6 +1610,7 @@ const partnerContributionMap = useMemo(() => {
           onToggleComplete={(taskId, taskDate) =>
             toggleTaskCompletion(taskDate || selectedDate, taskId)
           }
+          todayStatus={aiRecommendationStatus}
         />
       );
     }
@@ -1649,11 +1787,11 @@ const partnerContributionMap = useMemo(() => {
                 return;
               }
               setTaskActionError('');
-              try {
-                const payload = {
-                  title: activeRecommendation.title,
-                  date: selectedDate,
-                  partnerId,
+            try {
+              const payload = {
+                title: activeRecommendation.title,
+                date: selectedDate,
+                partnerId,
                   room: activeRecommendation.room || '공용 공간',
                   tip: '',
                   repeat: '없음',
@@ -1672,6 +1810,19 @@ const partnerContributionMap = useMemo(() => {
                   recommendation: activeRecommendation.title,
                   date: selectedDate,
                 });
+                if (
+                  rlContext &&
+                  activeRecommendation.legacyId === rlContext.chosenTaskId
+                ) {
+                  rlApi.feedback({
+                    dow: rlContext.dow,
+                    condition_scores: rlContext.conditionScores,
+                    task_id: rlContext.chosenTaskId,
+                    score: rating,
+                  }).catch((feedbackError) => {
+                    console.error('RL 피드백 전송 실패:', feedbackError);
+                  });
+                }
               } catch (error) {
                 console.error('추천 작업 생성 실패:', error);
                 setTaskActionError(
@@ -1866,6 +2017,7 @@ function DayView({
   partnerMap,
   onOpenDetail,
   onToggleComplete,
+  todayStatus,
 }) {
   return (
     <section className="day-stage">
@@ -1920,6 +2072,7 @@ function DayView({
         partners={partners}
         onSelectRecommendation={onSelectRecommendation}
         partnerMap={partnerMap}
+        todayStatus={todayStatus}
       />
     </section>
   );
@@ -2132,64 +2285,72 @@ function RecommendationSection({
   partners = [],
   onSelectRecommendation,
   partnerMap,
+  todayStatus = {},
 }) {
   if (!recommendations.length) {
     return null;
   }
   const daily = recommendations.filter((rec) => rec.category === 'daily');
   const rolling = recommendations.filter((rec) => rec.category !== 'daily');
-  const renderRow = (list, title) => (
-    <div className="recommendation-line">
-      <div className="recommendation-row-heading">
-        <span>{title}</span>
-      </div>
-      <div className="recommendation-row recommendation-row-inline">
-        {list.length === 0 ? (
-          <p className="recommendation-empty">추천할 항목이 없습니다.</p>
-        ) : (
-          list.map((rec) => {
-            const assignedPartnerId =
-              rec.assignedPartnerId || rec.partnerId || partners[0]?.id || '';
-            const assignedPartner = partnerMap[assignedPartnerId];
-            const normalizedRec =
-              rec.assignedPartnerId === assignedPartnerId
-                ? rec
-                : { ...rec, assignedPartnerId };
-            return (
-              <div
-                key={rec.id}
-                className="recommendation-card recommendation-card-compact"
-                style={{
-                  borderColor: assignedPartner?.accent || '#c3d7cf',
-                  boxShadow: `inset 0 0 0 2px ${
-                    assignedPartner?.color || '#d0e2d7'
-                  }33`,
-                  backgroundColor: `${
-                    assignedPartner?.color || '#eef4ec'
-                  }1a`,
-                }}
-              >
-                <div className="rec-title">
-                  <strong>{rec.title}</strong>
-                  <span className="rec-tag">{rec.room || '공용'}</span>
-                </div>
-                <p className="rec-meta">
-                  {assignedPartner?.name || '가사 파트너'} · {rec.points}P
-                </p>
-                <button
-                  type="button"
-                  className="rec-apply"
-                  onClick={() => onSelectRecommendation(normalizedRec)}
+  const renderRow = (list, title, status = {}) => {
+    const { loading = false, error = '' } = status;
+    return (
+      <div className="recommendation-line">
+        <div className="recommendation-row-heading">
+          <span>{title}</span>
+        </div>
+        <div className="recommendation-row recommendation-row-inline">
+          {loading ? (
+            <p className="recommendation-empty">AI 추천을 불러오는 중이에요...</p>
+          ) : error ? (
+            <p className="recommendation-empty">{error}</p>
+          ) : list.length === 0 ? (
+            <p className="recommendation-empty">추천할 항목이 없습니다.</p>
+          ) : (
+            list.map((rec) => {
+              const assignedPartnerId =
+                rec.assignedPartnerId || rec.partnerId || partners[0]?.id || '';
+              const assignedPartner = partnerMap[assignedPartnerId];
+              const normalizedRec =
+                rec.assignedPartnerId === assignedPartnerId
+                  ? rec
+                  : { ...rec, assignedPartnerId };
+              return (
+                <div
+                  key={rec.id}
+                  className="recommendation-card recommendation-card-compact"
+                  style={{
+                    borderColor: assignedPartner?.accent || '#c3d7cf',
+                    boxShadow: `inset 0 0 0 2px ${
+                      assignedPartner?.color || '#d0e2d7'
+                    }33`,
+                    backgroundColor: `${
+                      assignedPartner?.color || '#eef4ec'
+                    }1a`,
+                  }}
                 >
-                  추가
-                </button>
-              </div>
-            );
-          })
-        )}
+                  <div className="rec-title">
+                    <strong>{rec.title}</strong>
+                    <span className="rec-tag">{rec.room || '공용'}</span>
+                  </div>
+                  <p className="rec-meta">
+                    {assignedPartner?.name || '가사 파트너'} · {rec.points}P
+                  </p>
+                  <button
+                    type="button"
+                    className="rec-apply"
+                    onClick={() => onSelectRecommendation(normalizedRec)}
+                  >
+                    추가
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <section className="recommendation-panel recommendation-compact recommendation-double">
@@ -2198,7 +2359,7 @@ function RecommendationSection({
       </div>
       <div className="recommendation-rows">
         {renderRow(daily, '매일 추천')}
-        {renderRow(rolling, '오늘의 추천')}
+        {renderRow(rolling, '오늘의 추천', todayStatus)}
       </div>
     </section>
   );
